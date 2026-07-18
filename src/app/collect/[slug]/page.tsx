@@ -35,6 +35,7 @@ export default function ReviewCollectorPage() {
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string>('');
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [timeLeft, setTimeLeft] = useState(120); // 120 seconds limit
   
   // UI states
   const [submitting, setSubmitting] = useState(false);
@@ -45,6 +46,11 @@ export default function ReviewCollectorPage() {
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (slug) fetchSpaceDetails();
@@ -81,6 +87,63 @@ export default function ReviewCollectorPage() {
     }
   };
 
+  const startAudioVisualizer = (stream: MediaStream) => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const draw = () => {
+        if (!canvasRef.current || !analyserRef.current) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        ctx.fillStyle = '#09090b';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2;
+        let barHeight;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          barHeight = dataArray[i] / 3;
+          ctx.fillStyle = `rgb(${barHeight + 120}, 92, 246)`;
+          ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+          x += barWidth;
+        }
+
+        animationFrameRef.current = requestAnimationFrame(draw);
+      };
+
+      draw();
+    } catch (e) {
+      console.warn('AudioContext failed to start', e);
+    }
+  };
+
+  const stopAudioVisualizer = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+  };
+
   // Turn webcam camera ON
   const startCameraStream = async () => {
     try {
@@ -88,6 +151,7 @@ export default function ReviewCollectorPage() {
       stopCameraStream(); // clear any previous streams
       setVideoBlob(null);
       setVideoPreviewUrl('');
+      setTimeLeft(120);
       recordedChunksRef.current = [];
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -110,6 +174,11 @@ export default function ReviewCollectorPage() {
   };
 
   const stopCameraStream = () => {
+    stopAudioVisualizer();
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
@@ -121,6 +190,7 @@ export default function ReviewCollectorPage() {
     if (!cameraStream) return;
     
     recordedChunksRef.current = [];
+    setTimeLeft(120);
     const options = { mimeType: 'video/webm;codecs=vp9,opus' };
     
     // Check fallback formats if VP9 is not supported (e.g. safari/mobile)
@@ -132,6 +202,20 @@ export default function ReviewCollectorPage() {
     }
 
     mediaRecorderRef.current = recorder;
+
+    // Start timer interval countdown
+    timerIntervalRef.current = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          stopRecording();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Start visualizer canvas animation loop
+    startAudioVisualizer(cameraStream);
 
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
@@ -409,7 +493,14 @@ export default function ReviewCollectorPage() {
           {/* Video Recording Interface */}
           {reviewType === 'video' && (
             <div className="space-y-4">
-              <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Video Testimonial</label>
+              <div className="flex items-center justify-between">
+                <label className="block text-[10px] font-bold uppercase text-slate-400">Video Testimonial</label>
+                {recording && (
+                  <span className="text-xs font-bold text-red-500 font-mono">
+                    {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')} remaining
+                  </span>
+                )}
+              </div>
               
               <div className="aspect-video w-full max-w-md mx-auto bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden relative flex items-center justify-center">
                 <video
@@ -432,14 +523,30 @@ export default function ReviewCollectorPage() {
                   </div>
                 )}
 
-                {/* Recording indicator */}
+                {/* Recording overlay with visualizer */}
                 {recording && (
-                  <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-full animate-pulse shadow-md">
-                    <span className="w-2 h-2 rounded-full bg-white shrink-0" />
-                    RECORDING
-                  </div>
+                  <>
+                    <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-full animate-pulse shadow-md">
+                      <span className="w-2 h-2 rounded-full bg-white shrink-0" />
+                      RECORDING
+                    </div>
+                    {/* Tiny visualizer canvas at the bottom */}
+                    <div className="absolute bottom-0 left-0 right-0 h-8 overflow-hidden bg-zinc-950/40 border-t border-white/5">
+                      <canvas ref={canvasRef} className="w-full h-full" width={300} height={32} />
+                    </div>
+                  </>
                 )}
               </div>
+
+              {/* Progress timer bar */}
+              {recording && (
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-red-500 transition-all duration-1000 ease-linear" 
+                    style={{ width: `${(timeLeft / 120) * 100}%` }}
+                  />
+                </div>
+              )}
 
               {/* Recorder actions */}
               <div className="flex justify-center gap-3">

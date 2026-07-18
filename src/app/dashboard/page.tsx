@@ -29,6 +29,8 @@ interface Testimonial {
   reviewer_email: string;
   reviewer_title: string;
   is_approved: boolean;
+  is_verified?: boolean;
+  social_platform?: string;
   created_at: string;
 }
 
@@ -53,6 +55,11 @@ export default function DashboardPage() {
   // Testimonials list
   const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
   const [activeTab, setActiveTab] = useState<'reviews' | 'widget'>('reviews');
+
+  // Widget Customization States
+  const [widgetLayout, setWidgetLayout] = useState<'slider' | 'masonry' | 'single'>('slider');
+  const [widgetTheme, setWidgetTheme] = useState<'dark' | 'light' | 'glass'>('dark');
+  const [widgetStarColor, setWidgetStarColor] = useState('#f59e0b');
 
   // UI Feedback
   const [copiedLink, setCopiedLink] = useState(false);
@@ -185,6 +192,40 @@ export default function DashboardPage() {
     }
   };
 
+  const handleToggleVerified = async (id: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('testimonials')
+        .update({ is_verified: !currentStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+      
+      setTestimonials(testimonials.map(t => 
+        t.id === id ? { ...t, is_verified: !currentStatus } : t
+      ));
+    } catch (err: any) {
+      setFeedback({ type: 'error', text: err.message });
+    }
+  };
+
+  const handleSetSocialPlatform = async (id: string, platform: string) => {
+    try {
+      const { error } = await supabase
+        .from('testimonials')
+        .update({ social_platform: platform === 'none' ? null : platform })
+        .eq('id', id);
+
+      if (error) throw error;
+      
+      setTestimonials(testimonials.map(t => 
+        t.id === id ? { ...t, social_platform: platform === 'none' ? undefined : platform } : t
+      ));
+    } catch (err: any) {
+      setFeedback({ type: 'error', text: err.message });
+    }
+  };
+
   // Delete Testimonial
   const handleDeleteTestimonial = async (id: string) => {
     if (!confirm('Are you sure you want to delete this testimonial?')) return;
@@ -227,7 +268,7 @@ export default function DashboardPage() {
 
   const copyEmbedCode = () => {
     if (!activeSpace) return;
-    const code = `<iframe src="${window.location.origin}/embed/${activeSpace.slug}" width="100%" height="600" style="border:none;" scrolling="no"></iframe>`;
+    const code = `<iframe src="${window.location.origin}/embed/${activeSpace.slug}?layout=${widgetLayout}&theme=${widgetTheme}&starColor=${encodeURIComponent(widgetStarColor)}" width="100%" height="600" style="border:none;" scrolling="no"></iframe>`;
     navigator.clipboard.writeText(code);
     setCopiedEmbed(true);
     setTimeout(() => setCopiedEmbed(false), 2000);
@@ -556,32 +597,67 @@ export default function DashboardPage() {
                           </div>
 
                           {/* Footer details */}
-                          <div className="border-t border-slate-800/80 pt-3 flex items-center justify-between">
-                            <div>
-                              <h5 className="font-bold text-xs text-white truncate max-w-[120px]">{t.reviewer_name}</h5>
-                              <p className="text-[10px] text-slate-500 truncate max-w-[120px]">{t.reviewer_title || 'Client'}</p>
+                          <div className="border-t border-slate-800/80 pt-3 flex flex-col gap-2.5">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h5 className="font-bold text-xs text-white truncate max-w-[120px] flex items-center gap-1">
+                                  {t.reviewer_name}
+                                  {t.is_verified && (
+                                    <span className="w-3.5 h-3.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[8px] font-bold rounded-full flex items-center justify-center scale-90">✓</span>
+                                  )}
+                                </h5>
+                                <p className="text-[10px] text-slate-500 truncate max-w-[120px]">{t.reviewer_title || 'Client'}</p>
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                {/* Verified badge toggle */}
+                                <button
+                                  onClick={() => handleToggleVerified(t.id, !!t.is_verified)}
+                                  className={`px-2 py-0.5 rounded text-[9px] font-semibold border transition ${
+                                    t.is_verified 
+                                      ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
+                                      : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-white'
+                                  }`}
+                                  title="Toggle Verified Badge"
+                                >
+                                  {t.is_verified ? 'Verified' : 'Verify'}
+                                </button>
+
+                                {/* Approve/Reject Toggle button */}
+                                <button
+                                  onClick={() => handleToggleApproval(t.id, t.is_approved)}
+                                  className={`p-1.5 rounded transition ${
+                                    t.is_approved 
+                                      ? 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400' 
+                                      : 'bg-slate-850 hover:bg-slate-700 text-slate-400'
+                                  }`}
+                                  title={t.is_approved ? 'Hide from widget' : 'Display on widget'}
+                                >
+                                  {t.is_approved ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteTestimonial(t.id)}
+                                  className="p-1.5 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 transition"
+                                  title="Delete review"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
 
-                            <div className="flex items-center gap-2">
-                              {/* Approve/Reject Toggle button */}
-                              <button
-                                onClick={() => handleToggleApproval(t.id, t.is_approved)}
-                                className={`p-1.5 rounded transition ${
-                                  t.is_approved 
-                                    ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400' 
-                                    : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
-                                }`}
-                                title={t.is_approved ? 'Hide from widget' : 'Display on widget'}
+                            {/* Social Platform select options */}
+                            <div className="flex items-center justify-between text-[10px] bg-slate-950/40 p-1.5 rounded-lg border border-slate-850">
+                              <span className="text-slate-500">Social Source:</span>
+                              <select
+                                className="bg-transparent border-0 text-[10px] text-slate-300 font-semibold cursor-pointer outline-none"
+                                value={t.social_platform || 'none'}
+                                onChange={(e) => handleSetSocialPlatform(t.id, e.target.value)}
                               >
-                                {t.is_approved ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                              </button>
-                              <button
-                                onClick={() => handleDeleteTestimonial(t.id)}
-                                className="p-1.5 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 transition"
-                                title="Delete review"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                <option value="none">None (Direct)</option>
+                                <option value="twitter">Twitter / X</option>
+                                <option value="linkedin">LinkedIn</option>
+                                <option value="google">Google Maps</option>
+                              </select>
                             </div>
                           </div>
 
@@ -596,6 +672,49 @@ export default function DashboardPage() {
               {activeTab === 'widget' && (
                 <div className="glass-panel p-6 space-y-6">
                   
+                  {/* Dynamic Customizers Panel */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-slate-800 pb-6">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5">Widget Layout</label>
+                      <select
+                        className="w-full glass-input px-3 py-2 text-xs"
+                        value={widgetLayout}
+                        onChange={(e) => setWidgetLayout(e.target.value as any)}
+                      >
+                        <option value="slider">Infinite Marquee Slider</option>
+                        <option value="masonry">Grid Wall (Masonry)</option>
+                        <option value="single">Single Featured Card</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5">Card Theme</label>
+                      <select
+                        className="w-full glass-input px-3 py-2 text-xs"
+                        value={widgetTheme}
+                        onChange={(e) => setWidgetTheme(e.target.value as any)}
+                      >
+                        <option value="dark">Sleek Dark Mode</option>
+                        <option value="light">Crisp Light Mode</option>
+                        <option value="glass">Glassmorphic Transparent</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5">Star Rating Color</label>
+                      <select
+                        className="w-full glass-input px-3 py-2 text-xs"
+                        value={widgetStarColor}
+                        onChange={(e) => setWidgetStarColor(e.target.value)}
+                      >
+                        <option value="#f59e0b">Amber Gold (⭐)</option>
+                        <option value="#10b981">Emerald Green (🟢)</option>
+                        <option value="#ec4899">Hot Pink (💖)</option>
+                        <option value="#8b5cf6">Accent Violet (💜)</option>
+                      </select>
+                    </div>
+                  </div>
+
                   <div>
                     <h3 className="font-bold text-white text-sm mb-1.5 flex items-center gap-1.5">
                       <Code className="w-4.5 h-4.5 text-violet-400" />
@@ -607,7 +726,7 @@ export default function DashboardPage() {
 
                     <div className="flex gap-2">
                       <div className="flex-1 p-3 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 font-mono text-[10px] select-all overflow-x-auto whitespace-nowrap">
-                        {`<iframe src="${window.location.origin}/embed/${activeSpace.slug}" width="100%" height="600" style="border:none;" scrolling="no"></iframe>`}
+                        {`<iframe src="${window.location.origin}/embed/${activeSpace.slug}?layout=${widgetLayout}&theme=${widgetTheme}&starColor=${encodeURIComponent(widgetStarColor)}" width="100%" height="${widgetLayout === 'slider' ? '200' : '600'}" style="border:none;" scrolling="no"></iframe>`}
                       </div>
                       <button
                         onClick={copyEmbedCode}
@@ -623,14 +742,15 @@ export default function DashboardPage() {
                   <div className="pt-6 border-t border-slate-800">
                     <h4 className="font-bold text-white text-xs mb-3 flex items-center gap-1">
                       <Paintbrush className="w-4 h-4 text-violet-400" />
-                      Live Widget Preview (Slider layout)
+                      Live Widget Preview ({widgetLayout} layout)
                     </h4>
                     
                     {/* Embedded preview wrapper */}
                     <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 min-h-[220px] flex items-center justify-center overflow-hidden">
                       <iframe 
-                        src={`/embed/${activeSpace.slug}?preview=true`}
-                        className="w-full h-[180px] border-none overflow-hidden" 
+                        src={`/embed/${activeSpace.slug}?layout=${widgetLayout}&theme=${widgetTheme}&starColor=${encodeURIComponent(widgetStarColor)}&preview=true`}
+                        className="w-full border-none overflow-hidden" 
+                        style={{ height: widgetLayout === 'slider' ? '180px' : '400px' }}
                         scrolling="no"
                       />
                     </div>
